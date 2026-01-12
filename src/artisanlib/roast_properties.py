@@ -926,6 +926,16 @@ class editGraphDlg(ArtisanResizeablDialog):
         self.weightpercentlabel.setMinimumWidth(55)
         self.weightpercentlabel.setMaximumWidth(55)
         self.weightpercentlabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        # NEW: label for yield shown separately from loss
+        self.weightyieldlabel = QLabel('')
+        self.weightyieldlabel.setToolTip(QApplication.translate('Tooltip', 'yield (roasted weight) as percent of green weight'))
+        # give it a reasonable min width so it's readable; adjust px as needed
+        self.weightyieldlabel.setMinimumWidth(60)
+        self.weightyieldlabel.setMaximumWidth(80)
+        self.weightyieldlabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        # --- end insert ---
+
         self.percent()
         self.weightinedit.editingFinished.connect(self.weightineditChanged)
         self.weightoutedit.editingFinished.connect(self.weightouteditChanged)
@@ -1459,7 +1469,15 @@ class editGraphDlg(ArtisanResizeablDialog):
         propGrid.addWidget(self.weightinedit,1,1,Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
         propGrid.addWidget(self.weightoutedit,1,2,Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
         propGrid.addWidget(self.unitsComboBox,1,3)
-        propGrid.addWidget(self.weightpercentlabel,1,4,Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
+        # --- replace: add both loss and yield labels into the propGrid (weight row) ---
+        # previous single label line (remove/comment it):
+        # propGrid.addWidget(self.weightpercentlabel,1,4,Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
+        # add loss label (keep in column 4 as before)
+        propGrid.addWidget(self.weightpercentlabel, 1, 4, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        # add yield label in the next column (column 5)
+        propGrid.addWidget(self.weightyieldlabel, 1, 5, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        propGrid.setColumnStretch(6,10)
+        # --- end replace ---
 
         propGrid.setRowMinimumHeight(2,self.volumeUnitsComboBox.minimumSizeHint().height())
         propGrid.addWidget(self.defectslabel,2,0,Qt.AlignmentFlag.AlignVCenter)
@@ -5071,18 +5089,54 @@ class editGraphDlg(ArtisanResizeablDialog):
             percentstring = f'-{float2float(percent, self.aw.percent_decimals)}%'
             self.moisturepercentlabel.setText(percentstring)    #density percent loss
 
+    # --- replace percent() with this version that sets loss and yield into separate labels ---
     def percent(self) -> None:
-        percent = 0.
+        """
+        Update two labels:
+        - self.weightpercentlabel: loss as '-X.XX%'
+        - self.weightyieldlabel: yield as 'Y.YY%'
+        If values cannot be computed, corresponding label is cleared.
+        """
+        loss_val: float | None = None
+        yield_val: float | None = None
+
         try:
-            if self.weightoutedit.text() != '' and float(comma2dot(self.weightoutedit.text())) != 0.0:
-                percent = self.aw.weight_loss(float(comma2dot(self.weightinedit.text())),float(comma2dot(self.weightoutedit.text())))
-        except Exception: # pylint: disable=broad-except
-            pass
-        if percent > 0:
-            percentstring = f'-{float2float(percent, self.aw.percent_decimals)}%'
-            self.weightpercentlabel.setText(percentstring)    #weight percent loss
+            wout_txt = comma2dot(self.weightoutedit.text()).strip()
+            win_txt = comma2dot(self.weightinedit.text()).strip()
+            if win_txt != '' and wout_txt != '':
+                w_in = float(win_txt)
+                w_out = float(wout_txt)
+                if w_in != 0.0:
+                    # existing helper for loss (returns positive percent if weight decreased)
+                    try:
+                        loss_val = self.aw.weight_loss(w_in, w_out)
+                    except Exception:  # pylint: disable=broad-except
+                        loss_val = None
+                    # yield percentage (roasted/green * 100)
+                    try:
+                        yield_val = (w_out / w_in) * 100.0
+                    except Exception:  # pylint: disable=broad-except
+                        yield_val = None
+        except Exception:  # pylint: disable=broad-except
+            loss_val = None
+            yield_val = None
+
+        pct_decimals = getattr(self.aw, 'percent_decimals', 2)
+
+        # Format and set loss label (show only if positive loss)
+        if loss_val is not None and loss_val > 0:
+            loss_str = f'-{float2float(loss_val, pct_decimals)}%'
+            self.weightpercentlabel.setText(loss_str)
         else:
             self.weightpercentlabel.setText('')
+
+        # Format and set yield label (show if a value was computed)
+        if yield_val is not None:
+            yield_str = f'{float2float(yield_val, pct_decimals)}%'
+            self.weightyieldlabel.setText(yield_str)
+        else:
+            self.weightyieldlabel.setText('')
+    # --- end replace ---
 
     def defect_percent(self) -> None:
         percent = 0.
