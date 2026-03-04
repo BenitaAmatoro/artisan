@@ -936,6 +936,18 @@ class editGraphDlg(ArtisanResizeablDialog):
         self.weightyieldlabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         # --- end insert ---
 
+        # Roasting rank label (焙煎度合いランク表示)
+        self.weightranklabel = QLabel('')
+        self.weightranklabel.setToolTip(QApplication.translate('Tooltip', 'roasting level based on weight loss'))
+        self.weightranklabel.setMinimumWidth(80)
+        self.weightranklabel.setMaximumWidth(100)
+        self.weightranklabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        # フォントを少し大きくして見やすく
+        rank_font = self.weightranklabel.font()
+        rank_font.setBold(True)
+        self.weightranklabel.setFont(rank_font)
+
+
         self.percent()
         self.weightinedit.editingFinished.connect(self.weightineditChanged)
         self.weightoutedit.editingFinished.connect(self.weightouteditChanged)
@@ -1476,7 +1488,9 @@ class editGraphDlg(ArtisanResizeablDialog):
         propGrid.addWidget(self.weightpercentlabel, 1, 4, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         # add yield label in the next column (column 5)
         propGrid.addWidget(self.weightyieldlabel, 1, 5, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        propGrid.setColumnStretch(6,10)
+        # add roasting rank label in the next column (column 6)
+        propGrid.addWidget(self.weightranklabel, 1, 6, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        propGrid.setColumnStretch(7, 10)
         # --- end replace ---
 
         propGrid.setRowMinimumHeight(2,self.volumeUnitsComboBox.minimumSizeHint().height())
@@ -4958,6 +4972,7 @@ class editGraphDlg(ArtisanResizeablDialog):
             self.density_out_editing_finished() # recalc volume_out
         # mark weightoutedit if higher than weightinedit
         self.checkWeightOut()
+        self.update_roasting_rank()  # ← ここに追加
 
     @pyqtSlot()
     def weightoutdefectsChanged(self) -> None:
@@ -5061,6 +5076,7 @@ class editGraphDlg(ArtisanResizeablDialog):
                 self.coffeeSelectionChanged(coffee_idx)
         self.weightinedit.setText(weight_in) # need to set it here again as blendSelectionChanged/coffeeSelectionChanged do update a 0
         self.checkWeightOut()
+        self.update_roasting_rank()  # ← ここに追加
 
     def density_percent(self) -> None:
         percent = 0.
@@ -5136,6 +5152,52 @@ class editGraphDlg(ArtisanResizeablDialog):
             self.weightyieldlabel.setText(yield_str)
         else:
             self.weightyieldlabel.setText('')
+    
+    
+    def update_roasting_rank(self) -> None:
+        """焙煎度合いランクを計算して表示"""
+        try:
+            weight_in_text = self.weightinedit.text().strip()
+            weight_out_text = self.weightoutedit.text().strip()
+            
+            if not weight_in_text or not weight_out_text:
+                self.weightranklabel.setText('')
+                return
+            
+            weight_in = float(comma2dot(weight_in_text))
+            weight_out = float(comma2dot(weight_out_text))
+            
+            if weight_in <= 0 or weight_out < 0:
+                self.weightranklabel.setText('')
+                return
+            
+            # ロス率を計算
+            loss_rate = ((weight_in - weight_out) / weight_in) * 100
+            
+            # ランク定義（ロス率の上限値）
+            rank_definitions = [
+                ('Light', 9.09),
+                ('Cinnamon', 11.11),
+                ('Medium', 13.04),
+                ('High', 14.89),
+                ('City', 16.67),
+                ('Full City', 18.37),
+                ('French', 20.00),
+                ('Italian', 21.57),
+            ]
+            
+            # ランクを判定
+            rank_name = 'Italian'  # デフォルト
+            for rank, max_loss in rank_definitions:
+                if loss_rate <= max_loss:
+                    rank_name = rank
+                    break
+            
+            # ラベルに表示
+            self.weightranklabel.setText(rank_name)
+            
+        except (ValueError, ZeroDivisionError):
+            self.weightranklabel.setText('')
     # --- end replace ---
 
     def defect_percent(self) -> None:

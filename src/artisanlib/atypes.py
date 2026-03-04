@@ -576,3 +576,44 @@ class BbpCache(TypedDict, total=False):
     end_events: list[list[float|None]]
     drop_events: list[list[float|None]]
     drop_to_end: float
+
+
+# Roasting Level Rankings (焙煎度合いランク定義)
+# Based on weight loss percentage
+
+ROASTING_RANKS: dict[str, tuple[float, float]] = {
+    'Light': (0.0, 9.09),
+    'Cinnamon': (9.09, 11.11),
+    'Medium': (11.11, 13.04),
+    'High': (13.04, 14.89),
+    'City': (14.89, 16.67),
+    'Full City': (16.67, 18.37),
+    'French': (18.37, 20.00),
+    'Italian': (20.00, 21.57),
+}
+
+
+def calculate_roasting_rank(weight_in: float, weight_out: float) -> tuple[str, float]:
+    """
+    計算する焙煎豆の重量ロス率からランク付けを計算
+    
+    Args:
+        weight_in: 生豆の重量 (g)
+        weight_out: 焙煎豆の重量 (g)
+    
+    Returns:
+        (ランク名, ロス率%) のタプル
+        ロス率が不正な場合は ('', 0.0) を返す
+    """
+    if weight_in <= 0:
+        return ('', 0.0)
+    
+    loss_rate = ((weight_in - weight_out) / weight_in) * 100
+    
+    for rank, (min_loss, max_loss) in ROASTING_RANKS.items():
+        if loss_rate <= max_loss:
+            return (rank, loss_rate)
+    
+    # 最高ランク（Italian）を超えた場合
+    return ('Italian', loss_rate)
+
