@@ -70,6 +70,7 @@ from artisanlib.time import ArtisanTime
 #from artisanlib.filters import LiveMedian
 from artisanlib.dialogs import ArtisanMessageBox
 from artisanlib.atypes import SerialSettings, BTBreakParams, BbpCache, AlarmSet, EnergyMetrics
+from artisanlib.atypes import filter_temperature_spike
 
 # import artisan.plus modules
 from plus.util import roastLink
@@ -4729,6 +4730,30 @@ class tgraphcanvas(QObject):
                                             if len(sample_extractimex2[i])>1 and et2_prevprev is not None and sample_extractimex2[i][-2] == sample_extratimex[i][-2] and et2_prevprev != sample_extratemp2[i][-2]:
                                                 sample_extractemp2[i][-2] = sample_extratemp2[i][-2]
 
+                                # Chattering/spike suppression for extra channels (sensor-based thresholding via channel_name).
+                                try:
+                                    if (not self.dummy_or_special_device(self.extradevices[i], 0) and
+                                            len(sample_extratemp1[i]) > 0 and extrat1 not in (-1, None) and sample_extratemp1[i][-1] not in (-1, None) and
+                                            not numpy.isnan(extrat1) and not numpy.isnan(sample_extratemp1[i][-1])):  # type: ignore[arg-type]
+                                        extrat1 = filter_temperature_spike(
+                                            float(extrat1),
+                                            float(sample_extratemp1[i][-1]),
+                                            self.roastertype,
+                                            channel_name=(self.extraname1[i] if len(self.extraname1) > i else None))
+                                except Exception:  # pylint: disable=broad-except
+                                    pass
+                                try:
+                                    if (not self.dummy_or_special_device(self.extradevices[i], 1) and
+                                            len(sample_extratemp2[i]) > 0 and extrat2 not in (-1, None) and sample_extratemp2[i][-1] not in (-1, None) and
+                                            not numpy.isnan(extrat2) and not numpy.isnan(sample_extratemp2[i][-1])):  # type: ignore[arg-type]
+                                        extrat2 = filter_temperature_spike(
+                                            float(extrat2),
+                                            float(sample_extratemp2[i][-1]),
+                                            self.roastertype,
+                                            channel_name=(self.extraname2[i] if len(self.extraname2) > i else None))
+                                except Exception:  # pylint: disable=broad-except
+                                    pass
+
                                 sample_extratimex[i].append(extratx)
                                 sample_extratemp1[i].append(float(extrat1))
                                 sample_extratemp2[i].append(float(extrat2))
@@ -4825,6 +4850,31 @@ class tgraphcanvas(QObject):
                                 sample_ctemp2[-2] = sample_temp2[-2]
                     t1_final = t1
                     t2_final = t2
+
+                    # Chattering/spike suppression: clamp extreme jumps to previous value.
+                    # This runs in the GUI thread (sample_processing), so keep it cheap.
+                    try:
+                        if (not self.dummy_or_special_device(self.device, 0) and
+                                len(sample_temp1) > 0 and t1_final not in (-1, None) and sample_temp1[-1] not in (-1, None) and
+                                not numpy.isnan(t1_final) and not numpy.isnan(sample_temp1[-1])):  # type: ignore[arg-type]
+                            t1_final = filter_temperature_spike(
+                                float(t1_final),
+                                float(sample_temp1[-1]),
+                                self.roastertype,
+                                channel_name=getattr(self.aw, 'ETname', 'ET'))
+                    except Exception:  # pylint: disable=broad-except
+                        pass
+                    try:
+                        if (not self.dummy_or_special_device(self.device, 1) and
+                                len(sample_temp2) > 0 and t2_final not in (-1, None) and sample_temp2[-1] not in (-1, None) and
+                                not numpy.isnan(t2_final) and not numpy.isnan(sample_temp2[-1])):  # type: ignore[arg-type]
+                            t2_final = filter_temperature_spike(
+                                float(t2_final),
+                                float(sample_temp2[-1]),
+                                self.roastertype,
+                                channel_name=getattr(self.aw, 'BTname', 'BT'))
+                    except Exception:  # pylint: disable=broad-except
+                        pass
 
                     sample_temp1.append(t1_final)
                     sample_temp2.append(t2_final)
@@ -19473,6 +19523,10 @@ class SampleThread(QThread):
         super().__init__()
 
         self.aw = aw
+        # Debug helper: deterministic spike injection to reproduce chattering.
+        # Enabled only when ARTISAN_SPIKE_INJECT is set.
+        self._spike_inject_counter:int = 0
+        self._spike_inject_flip:int = 1
 
         # NOTE: this should be smaller than self.min_delay (currently 0.1)
         if str(platform.system()).startswith('Windows'):
@@ -19485,6 +19539,30 @@ class SampleThread(QThread):
         try:
             if self.aw.simulator is None:
                 tx,t1,t2 = self.aw.ser.devicefunctionlist[self.aw.qmc.device]()
+                # Optional spike injection for debugging/testing the anti-chattering filter.
+                # Usage (PowerShell): $env:ARTISAN_SPIKE_INJECT='both'; $env:ARTISAN_SPIKE_INJECT_EVERY='30'; $env:ARTISAN_SPIKE_INJECT_MAG='50'
+                inject = os.environ.get('ARTISAN_SPIKE_INJECT', '').strip().lower()
+                if inject not in ('', '0', 'false', 'no'):
+                    try:
+                        every = int(os.environ.get('ARTISAN_SPIKE_INJECT_EVERY', '30'))
+                    except Exception:  # pylint: disable=broad-except
+                        every = 30
+                    try:
+                        mag = float(os.environ.get('ARTISAN_SPIKE_INJECT_MAG', '50'))
+                    except Exception:  # pylint: disable=broad-except
+                        mag = 50.0
+                    if every > 0:
+                        self._spike_inject_counter += 1
+                        if (self._spike_inject_counter % every) == 0:
+                            self._spike_inject_flip *= -1
+                            delta = self._spike_inject_flip * mag
+                            # Only inject on valid (non-error) readings.
+                            if t1 not in (-1, None) and not numpy.isnan(t1):  # type: ignore[arg-type]
+                                if inject in ('1', 'true', 'both', 'et'):
+                                    t1 = float(t1) + delta
+                            if t2 not in (-1, None) and not numpy.isnan(t2):  # type: ignore[arg-type]
+                                if inject in ('1', 'true', 'both', 'bt'):
+                                    t2 = float(t2) + delta
                 if self.aw.qmc.swapETBT:
                     return tx,float(t2),float(t1)
                 return tx,float(t1),float(t2)

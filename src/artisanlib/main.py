@@ -14751,16 +14751,27 @@ class ApplicationWindow(QMainWindow):
                     break
                 try:
                     timex.append(float(stringtoseconds(fields[0])))
+
                     try:
                         t1 = float(fields[1])
-                    except Exception: # pylint: disable=broad-except
+                    except Exception:
                         t1 = -1
-                    temp1.append(t1)
                     try:
                         t2 = float(fields[2])
-                    except Exception: # pylint: disable=broad-except
+                    except Exception:
                         t2 = -1
+                    # チャタリング除去フィルタを適用
+                    if len(temp1) > 0 and t1 > 0:  # 前回データが存在し、現在値が有効
+                        from artisanlib.atypes import filter_temperature_spike
+                        roaster_type = self.qmc.roastertype if hasattr(self.qmc, 'roastertype') else ''
+                        t1 = filter_temperature_spike(t1, temp1[-1], roaster_type, channel_name=getattr(self, 'ETname', 'ET'))
+                    if len(temp2) > 0 and t2 > 0:  # 前回データが存在し、現在値が有効
+                        from artisanlib.atypes import filter_temperature_spike
+                        roaster_type = self.qmc.roastertype if hasattr(self.qmc, 'roastertype') else ''
+                        t2 = filter_temperature_spike(t2, temp2[-1], roaster_type, channel_name=getattr(self, 'BTname', 'BT'))
+                    temp1.append(t1)
                     temp2.append(t2)
+
                     event = fields[3]
                     if event == 'Beans loaded':
                         timeindex[0] = max(-1,len(timex) - 1)

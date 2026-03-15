@@ -17,6 +17,8 @@
 
 
 import datetime
+import os
+import logging
 
 from PyQt6.QtCore import QDateTime
 
@@ -24,6 +26,8 @@ from typing import TypedDict, Required, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from plus.stock import BlendList, Blend
+
+_log: logging.Logger = logging.getLogger(__name__)
 
 class ComputedProfileInformation(TypedDict, total=False):
     CHARGE_ET: float
@@ -617,3 +621,51 @@ def calculate_roasting_rank(weight_in: float, weight_out: float) -> tuple[str, f
     # 最高ランク（Italian）を超えた場合
     return ('Italian', loss_rate)
 
+
+# Temperature Chattering Filter
+# センサー一瞬落ちによる急激な温度変化を除外
+
+def filter_temperature_spike(current_temp: float, previous_temp: float, roaster_type: str, channel_name: str|None = None) -> float:
+    """
+    急激な温度変化（チャタリング）を検出して除外
+
+    Args:
+        current_temp: 現在の温度値 (°C)
+        previous_temp: 前回の温度値 (°C)
+        roaster_type: 焙煎機タイプ (互換用。channel_name が無い場合のみ判定に使う)
+        channel_name: センサー名/チャンネル名。例: 'Damper' を含む場合は緩い閾値を適用
+
+    Returns:
+        フィルタされた温度値（前回値を返す場合がある）
+    """
+    # ignore sentinel/error values
+    if current_temp == -1 or previous_temp == -1:
+        return current_temp
+    # initial data
+    if previous_temp < 0:
+        return current_temp
+
+    # 許容される温度変化の上限（1秒単位）
+    # Prefer channel_name based detection (sensor-based), fall back to roaster_type for backward compatibility.
+    if channel_name is not None:
+        is_damper_sensor = ('damper' in channel_name.lower())
+    else:
+        is_damper_sensor = (roaster_type.lower() == 'damper')
+    max_change = 20.0 if is_damper_sensor else 10.0
+
+    # 温度変化を計算
+    temp_change = abs(current_temp - previous_temp)
+
+    # 急激な変化の場合は前回値を返す
+    if temp_change > max_change:
+        # Debug helper: log channel names that are being clamped.
+        # Enable via env var ARTISAN_SPIKE_DEBUG=1
+        if os.environ.get('ARTISAN_SPIKE_DEBUG', '').strip() not in ('', '0', 'false', 'False', 'no', 'NO'):
+            _log.info(
+                "spike filtered: channel=%r roaster_type=%r prev=%.2f cur=%.2f change=%.2f max=%.2f -> prev",
+                channel_name, roaster_type, previous_temp, current_temp, temp_change, max_change
+            )
+        return previous_temp
+
+    # 正常な範囲内なら現在値を返す
+    return current_temp

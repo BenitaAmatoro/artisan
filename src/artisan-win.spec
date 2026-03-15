@@ -97,14 +97,25 @@ if os.environ.get('APPVEYOR'):
     QT_TRANSL = os.environ.get('QT_TRANSL')
     ARTISAN_LEGACY = os.environ.get('ARTISAN_LEGACY')
 else:
-    msg =f'artisan-win.spec is intended only to run on Appveyor CI.'
-    logging.error(msg)
-    sys.exit('Fatal Error')
+    # Local build support (developer machines).
+    # You still need all runtime deps installed in the current Python environment.
+    # NOTE: In PyInstaller spec execution context, __file__ might not be defined.
+    # This spec is expected to be run from the src folder.
+    ARTISAN_SRC = os.path.abspath(os.getcwd())
+    PYTHON = sys.prefix
+    try:
+        from PyQt6.QtCore import QLibraryInfo  # type: ignore[import-not-found]
+        PYQT = '6'
+        QT_TRANSL = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    except Exception:  # pylint: disable=broad-except
+        PYQT = os.environ.get('PYQT', '6')
+        QT_TRANSL = os.environ.get('QT_TRANSL', '')
+    ARTISAN_LEGACY = os.environ.get('ARTISAN_LEGACY', 'False')
 
 NAME = 'artisan'
 TARGET = 'dist\\' + NAME + '\\'
 PYTHON_PACKAGES = PYTHON + r'\Lib\site-packages'
-PYQT_QT = PYTHON_PACKAGES + r'\PyQt' + PYQT + r'\Qt'
+PYQT_QT = os.path.join(PYTHON_PACKAGES, f'PyQt{PYQT}', ('Qt6' if PYQT == '6' else 'Qt'))
 PYQT_QT_BIN = PYQT_QT + r'\bin'
 PYQT_QT_TRANSLATIONS = QT_TRANSL
 YOCTO_BIN = PYTHON_PACKAGES + r'\yoctopuce\cdll'
@@ -188,7 +199,8 @@ coll = COLLECT(exe,
 logging.info(">>>>> Copying additional needed files")
 
 # requires the Microsoft Visual C++ 2015 Redistributable Package (x64), vc_redist.x64.exe, to be located above the source directory
-copy_file(r'..\vc_redist.x64.exe', TARGET)
+# Optional for local zip builds: skip if not present.
+copy_file(r'..\vc_redist.x64.exe', TARGET, fatal=False)
 
 copy_file('README.txt',TARGET)
 copy_file(r'..\LICENSE', TARGET + r'\LICENSE.txt')
@@ -464,8 +476,9 @@ def readable_bytes(size_in_bytes):
             return f"{size_in_bytes:.2f} {unit}"
         size_in_bytes /= 1024.0
 
-# Get total size in bytes minus the vc_redist.x64.exe file
-size_bytes = get_size(TARGET) - get_size(TARGET + 'vc_redist.x64.exe')
+# Get total size in bytes minus the vc_redist.x64.exe file (optional on local builds)
+_vc_redist = os.path.join(TARGET, 'vc_redist.x64.exe')
+size_bytes = get_size(TARGET) - (get_size(_vc_redist) if os.path.exists(_vc_redist) else 0)
 logging.info(f'>>>>> Net size of install folder: {readable_bytes(size_bytes)}')
 
 ###################################
